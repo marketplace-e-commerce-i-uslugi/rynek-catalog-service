@@ -20,6 +20,10 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -187,6 +191,37 @@ class OfferFlowTests {
         mvc.perform(get("/api/v1/offers/mine").param("status", "PAUSED").header(HttpHeaders.AUTHORIZATION, bearer(seller)))
                 .andExpect(jsonPath("$.items[*].id", contains(id)))
                 .andExpect(jsonPath("$.items[0].views").value(0));
+    }
+
+    /** Kreator wysyła PATCH /stock i PUT /media równolegle; żaden z zapisów nie może cofnąć drugiego. */
+    @Test
+    void parallelStockAndMediaUpdatesKeepBothChanges() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = created(seller, PHONE);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            for (int stock = 2; stock <= 6; stock++) {
+                UUID photo = photo(seller);
+                int expected = stock;
+                CountDownLatch start = new CountDownLatch(1);
+                Future<?> stockCall = pool.submit(() -> {
+                    start.await();
+                    return stock(seller, id, expected).andExpect(status().isNoContent());
+                });
+                Future<?> mediaCall = pool.submit(() -> {
+                    start.await();
+                    return setMedia(seller, id, "[\"" + photo + "\"]").andExpect(status().isOk());
+                });
+                start.countDown();
+                stockCall.get();
+                mediaCall.get();
+                mvc.perform(get("/api/v1/offers/" + id).header(HttpHeaders.AUTHORIZATION, bearer(seller)))
+                        .andExpect(jsonPath("$.stock").value(expected))
+                        .andExpect(jsonPath("$.photoMediaIds", contains(photo.toString())));
+            }
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

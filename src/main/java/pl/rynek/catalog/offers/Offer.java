@@ -17,11 +17,17 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.Fetch;
 import org.hibernate.annotations.FetchMode;
 
+/**
+ * {@code @DynamicUpdate}: UPDATE obejmuje tylko zmienione kolumny. Kreator wysyła równolegle np. {@code PUT /media}
+ * i {@code PATCH /stock}; przy pełnym UPDATE drugi zapis przywracałby pozostałe pola sprzed pierwszego.
+ */
 @Entity
 @Table(name = "offers")
+@DynamicUpdate
 public class Offer {
 
     @Id
