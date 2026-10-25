@@ -2,7 +2,7 @@
 
 Mikroserwis platformy **Rynek**: `catalog-service` — oferty (produkty i usługi), kategorie
 
-Zakres, endpointy i zdarzenia są opisane w `README.md`. Na razie to szkielet: endpointy zwracają 501, DTO są puste. Nie dodawaj logiki bez wyraźnej prośby.
+Zakres, endpointy i zdarzenia są opisane w `README.md`. Kategorie i oferty działają (PostgreSQL + Flyway, Spring Security Resource Server z JWKS identity); kanał sprzedawcy przychodzi z channel-service, zdjęcia z media-service. Rezerwacja i zwolnienie zapasu zwracają 501 (czekają na order-service). Nie dodawaj logiki bez wyraźnej prośby.
 
 ## Wspólne konwencje API (§1 dokumentu architektury)
 
@@ -35,6 +35,7 @@ Legenda kolumny **Dostęp**: `pub` = bez logowania, `user` = zalogowany, `seller
 
 ## Struktura kodu
 
-- `pl.rynek.catalog.api`: kontrolery REST (pełne ścieżki w adnotacjach), `api.dto`: rekordy żądań, `common.NotImplemented`: odpowiedź 501
+- `pl.rynek.catalog.api`: kontrolery REST (pełne ścieżki w adnotacjach), `api.dto`: rekordy żądań i odpowiedzi, `common.NotImplemented`: odpowiedź 501
+- `categories`: drzewo i atrybuty (dane z migracji); `offers`: oferta, publikacja, wskaźnik jakości; `channel`, `media`: klienci `/internal` channel-service i media-service; `config`: security, oglądający na endpointach `pub` (`Viewer`), błędy RFC 7807 po polsku
 - Konfiguracja: `src/main/resources/application.yml`
 - Port lokalny: 8083
