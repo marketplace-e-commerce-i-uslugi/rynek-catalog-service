@@ -37,6 +37,6 @@ public class MediaClient {
         }
     }
 
-    public record MediaFile(UUID id, UUID ownerId, String purpose, String contentType, String url) {
+    public record MediaFile(UUID id, UUID ownerId, String purpose, String contentType, String url, String altText) {
     }
 }

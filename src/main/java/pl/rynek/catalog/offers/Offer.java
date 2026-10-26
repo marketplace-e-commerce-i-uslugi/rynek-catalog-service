@@ -338,7 +338,7 @@ public class Offer {
     }
 
     @Embeddable
-    public record Photo(@Column(name = "media_id") UUID mediaId, String url) {
+    public record Photo(@Column(name = "media_id") UUID mediaId, String url, @Column(name = "alt_text") String altText) {
     }
 
     @Embeddable

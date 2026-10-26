@@ -21,6 +21,9 @@ public interface OfferRepository extends JpaRepository<Offer, UUID> {
     @Query("select o from Offer o where o.ownerId = :ownerId and o.deletedAt is null and (:status is null or o.status = :status) order by o.updatedAt desc, o.id")
     List<Offer> findMine(UUID ownerId, OfferStatus status, Pageable page);
 
+    @Query("select count(o) from Offer o where o.channelId = :channelId and o.deletedAt is null and o.status = pl.rynek.catalog.offers.OfferStatus.PUBLISHED")
+    int countPublished(UUID channelId);
+
     @Query("select o from Offer o where o.channelId = :channelId and o.deletedAt is null and o.status = pl.rynek.catalog.offers.OfferStatus.PUBLISHED")
     List<Offer> findPublished(UUID channelId, Pageable page);
 }

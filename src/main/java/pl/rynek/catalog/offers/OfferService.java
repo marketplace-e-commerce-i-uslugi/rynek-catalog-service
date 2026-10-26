@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -36,18 +37,22 @@ public class OfferService {
 
     static final Set<String> CONDITIONS = Set.of("Nowy", "Używany", "Poleasingowy", "Uszkodzony");
     static final int MIN_TITLE = 5;
+    static final int MIN_SERVICE_DESCRIPTION = 20;
 
     private final OfferRepository offers;
     private final CategoryService categories;
     private final ChannelClient channels;
     private final MediaClient media;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
 
-    public OfferService(OfferRepository offers, CategoryService categories, ChannelClient channels, MediaClient media, Clock clock) {
+    public OfferService(OfferRepository offers, CategoryService categories, ChannelClient channels, MediaClient media,
+                        ApplicationEventPublisher events, Clock clock) {
         this.offers = offers;
         this.categories = categories;
         this.channels = channels;
         this.media = media;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -61,6 +66,7 @@ public class OfferService {
         Offer offer = new Offer(ownerId, channel.id(), type, channel.address() == null ? "" : channel.address(), now);
         apply(offer, request.title(), request.categoryId(), request.price() == null ? null : request.price().amount(),
                 request.condition(), request.description(), request.params(), now);
+        applyExtras(ownerId, offer, request.stock(), request.media(), request.service(), now);
         return offers.save(offer);
     }
 
@@ -84,6 +90,7 @@ public class OfferService {
         }
         apply(offer, request.title(), request.categoryId(), request.price() == null ? null : request.price().amount(),
                 request.condition(), request.description(), request.params(), now);
+        applyExtras(userId, offer, request.stock(), request.media(), request.service(), now);
         return stillComplete(offer);
     }
 
@@ -91,39 +98,20 @@ public class OfferService {
     @Transactional
     public Offer setMedia(UUID userId, String offerId, SetMediaRequest request) {
         Offer offer = owned(userId, offerId);
-        List<Photo> photos = new ArrayList<>();
-        for (UUID mediaId : request.photoMediaIds().stream().distinct().toList()) {
-            MediaFile file = media.get(mediaId);
-            if (!file.ownerId().equals(userId)) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Możesz dodać tylko zdjęcia, które sam wysłałeś.");
-            }
-            if (!"OFFER_PHOTO".equals(file.purpose())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ten plik wysłano w innym celu. Dodaj zdjęcie ponownie.");
-            }
-            photos.add(new Photo(mediaId, file.url()));
-        }
-        offer.changeMedia(photos, request.videoId(), clock.instant());
+        applyMedia(userId, offer, request, clock.instant());
         return stillComplete(offer);
     }
 
     @Transactional
     public Offer setServiceDetails(UUID userId, String offerId, SetServiceDetailsRequest request) {
         Offer offer = owned(userId, offerId);
-        if (offer.getType() != OfferType.SERVICE) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cennik usługi można ustawić tylko w ofercie usługi.");
-        }
-        offer.changeServiceDetails(request.priceFrom().amount(), request.unit().trim(), request.area().trim(),
-                request.durationMin(), request.depositPercent(), clock.instant());
+        applyService(offer, request, clock.instant());
         return stillComplete(offer);
     }
 
     @Transactional
     public void setStock(UUID userId, String offerId, int stock) {
-        Offer offer = owned(userId, offerId);
-        if (offer.getType() != OfferType.PRODUCT) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Stan magazynowy mają tylko produkty.");
-        }
-        offer.changeStock(stock, clock.instant());
+        applyStock(owned(userId, offerId), stock, clock.instant());
     }
 
     @Transactional(readOnly = true)
@@ -138,6 +126,7 @@ public class OfferService {
         Offer offer = owned(userId, offerId);
         requireComplete(offer);
         offer.publish(clock.instant());
+        events.publishEvent(new ChannelOffersChanged(offer.getChannelId()));
         return offer;
     }
 
@@ -148,6 +137,7 @@ public class OfferService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Wstrzymać można tylko opublikowaną ofertę.");
         }
         offer.pause(clock.instant());
+        events.publishEvent(new ChannelOffersChanged(offer.getChannelId()));
         return offer;
     }
 
@@ -160,7 +150,9 @@ public class OfferService {
 
     @Transactional
     public void delete(UUID userId, String offerId) {
-        owned(userId, offerId).delete(clock.instant());
+        Offer offer = owned(userId, offerId);
+        offer.delete(clock.instant());
+        events.publishEvent(new ChannelOffersChanged(offer.getChannelId()));
     }
 
     @Transactional(readOnly = true)
@@ -205,8 +197,14 @@ public class OfferService {
             if (offer.getCondition() == null) {
                 missing.add("stan");
             }
-        } else if (!offer.hasServiceDetails() || offer.getPriceAmount() <= 0) {
-            missing.add("cennik usługi (cena od, jednostka, obszar, czas)");
+        } else {
+            if (!offer.hasServiceDetails() || offer.getPriceAmount() <= 0) {
+                missing.add("cennik usługi (cena od, jednostka, obszar, czas)");
+            }
+            // Usługa nie ma parametrów ani stanu, więc zakres pracy kupujący poznaje tylko z opisu.
+            if (offer.getDescription().length() < MIN_SERVICE_DESCRIPTION) {
+                missing.add("opis usługi (co najmniej " + MIN_SERVICE_DESCRIPTION + " znaków)");
+            }
         }
         if (offer.getPhotos().isEmpty() && offer.getVideoId() == null) {
             missing.add("co najmniej jedno zdjęcie albo film");
@@ -246,6 +244,51 @@ public class OfferService {
         if (params != null) {
             offer.changeParams(params.stream().map(p -> new Param(p.label().trim(), p.value().trim())).toList(), now);
         }
+    }
+
+    /** Pola kreatora zapisywane dawniej osobnymi żądaniami; tu w tej samej transakcji co reszta zmiany. */
+    private void applyExtras(UUID userId, Offer offer, Integer stock, SetMediaRequest mediaRequest,
+                             SetServiceDetailsRequest service, Instant now) {
+        if (stock != null) {
+            applyStock(offer, stock, now);
+        }
+        if (mediaRequest != null) {
+            applyMedia(userId, offer, mediaRequest, now);
+        }
+        if (service != null) {
+            applyService(offer, service, now);
+        }
+    }
+
+    /** Każde zdjęcie musi być własnym plikiem {@code OFFER_PHOTO}; inaczej można by pokazać cudze zdjęcia. */
+    private void applyMedia(UUID userId, Offer offer, SetMediaRequest request, Instant now) {
+        List<Photo> photos = new ArrayList<>();
+        for (UUID mediaId : request.photoMediaIds().stream().distinct().toList()) {
+            MediaFile file = media.get(mediaId);
+            if (!file.ownerId().equals(userId)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Możesz dodać tylko zdjęcia, które sam wysłałeś.");
+            }
+            if (!"OFFER_PHOTO".equals(file.purpose())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ten plik wysłano w innym celu. Dodaj zdjęcie ponownie.");
+            }
+            photos.add(new Photo(mediaId, file.url(), file.altText()));
+        }
+        offer.changeMedia(photos, request.videoId(), now);
+    }
+
+    private void applyService(Offer offer, SetServiceDetailsRequest request, Instant now) {
+        if (offer.getType() != OfferType.SERVICE) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cennik usługi można ustawić tylko w ofercie usługi.");
+        }
+        offer.changeServiceDetails(request.priceFrom().amount(), request.unit().trim(), request.area().trim(),
+                request.durationMin(), request.depositPercent(), now);
+    }
+
+    private void applyStock(Offer offer, int stock, Instant now) {
+        if (offer.getType() != OfferType.PRODUCT) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Stan magazynowy mają tylko produkty.");
+        }
+        offer.changeStock(stock, now);
     }
 
     private Offer stillComplete(Offer offer) {

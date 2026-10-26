@@ -6,8 +6,12 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -143,7 +147,7 @@ class OfferFlowTests {
         UUID photo = photo(seller);
         setMedia(seller, id, "[\"" + photo + "\"]")
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.photoMediaIds", contains(photo.toString())))
+                .andExpect(jsonPath("$.photos[*].mediaId", contains(photo.toString())))
                 .andExpect(jsonPath("$.thumbnailUrl").value("http://localhost:8333/rynek-media-public/offer_photo/" + photo));
         publish(seller, id)
                 .andExpect(status().isUnprocessableContent())
@@ -217,11 +221,75 @@ class OfferFlowTests {
                 mediaCall.get();
                 mvc.perform(get("/api/v1/offers/" + id).header(HttpHeaders.AUTHORIZATION, bearer(seller)))
                         .andExpect(jsonPath("$.stock").value(expected))
-                        .andExpect(jsonPath("$.photoMediaIds", contains(photo.toString())));
+                        .andExpect(jsonPath("$.photos[*].mediaId", contains(photo.toString())));
             }
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    /** Kreator zapisuje pola, stan, zdjęcia i cennik jednym żądaniem: całość albo nic. */
+    @Test
+    void wizardSavesEverythingInOneRequestOrNothing() throws Exception {
+        UUID seller = UUID.randomUUID();
+        UUID first = photo(seller);
+        UUID second = photo(seller);
+        String id = created(seller, "{\"type\":\"PRODUCT\",\"title\":\"iPhone 15 128 GB\",\"categoryId\":\"elektronika-telefony\","
+                + "\"condition\":\"Nowy\",\"price\":{\"amount\":349900,\"currency\":\"PLN\"},\"params\":[{\"label\":\"Marka\",\"value\":\"Apple\"}],"
+                + "\"stock\":5,\"media\":{\"photoMediaIds\":[\"" + second + "\",\"" + first + "\"],\"videoId\":null}}");
+        mvc.perform(get("/api/v1/offers/" + id).header(HttpHeaders.AUTHORIZATION, bearer(seller)))
+                .andExpect(jsonPath("$.stock").value(5))
+                .andExpect(jsonPath("$.photos[*].mediaId", contains(second.toString(), first.toString())))
+                .andExpect(jsonPath("$.photos[0].altText").value("Zdjęcie " + second));
+        publish(seller, id).andExpect(status().isOk());
+
+        // Cudze zdjęcie odrzuca całą zmianę, łącznie z tytułem i stanem.
+        update(seller, id, "{\"title\":\"Nowy tytuł oferty\",\"stock\":9,\"media\":{\"photoMediaIds\":[\"" + photo(UUID.randomUUID()) + "\"]}}")
+                .andExpect(status().isForbidden());
+        // Opublikowana oferta bez zdjęć nie przechodzi, więc tytuł i stan też zostają.
+        update(seller, id, "{\"title\":\"Nowy tytuł oferty\",\"stock\":9,\"media\":{\"photoMediaIds\":[]}}")
+                .andExpect(status().isUnprocessableContent());
+        mvc.perform(get("/api/v1/offers/" + id))
+                .andExpect(jsonPath("$.title").value("iPhone 15 128 GB"))
+                .andExpect(jsonPath("$.stock").value(5))
+                .andExpect(jsonPath("$.photos", hasSize(2)));
+
+        update(seller, id, "{\"title\":\"Nowy tytuł oferty\",\"stock\":9,\"media\":{\"photoMediaIds\":[\"" + first + "\"]}}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Nowy tytuł oferty"))
+                .andExpect(jsonPath("$.stock").value(9))
+                .andExpect(jsonPath("$.photos[*].mediaId", contains(first.toString())));
+        update(seller, id, "{\"stock\":-1}").andExpect(status().isBadRequest());
+        update(seller, id, "{\"service\":{\"priceFrom\":{\"amount\":2500,\"currency\":\"PLN\"},\"unit\":\"m²\",\"area\":\"Kraków\","
+                + "\"durationMin\":60,\"depositPercent\":0}}").andExpect(status().isConflict());
+    }
+
+    @Test
+    void serviceIsCreatedWithPriceListInOneRequest() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = created(seller, "{\"type\":\"SERVICE\",\"title\":\"Malowanie mieszkań\",\"categoryId\":\"remonty-malowanie\","
+                + "\"description\":\"Ściany i sufity, z gruntowaniem.\",\"media\":{\"photoMediaIds\":[\"" + photo(seller) + "\"]},"
+                + "\"service\":{\"priceFrom\":{\"amount\":2500,\"currency\":\"PLN\"},\"unit\":\"m²\",\"area\":\"Kraków\",\"durationMin\":240,\"depositPercent\":20}}");
+        publish(seller, id).andExpect(status().isOk()).andExpect(jsonPath("$.priceUnit").value("m²"));
+        create(seller, "{\"type\":\"SERVICE\",\"stock\":3}").andExpect(status().isConflict());
+    }
+
+    /** Licznik w nagłówku kanału: catalog wysyła liczbę opublikowanych ofert po każdej zmianie widoczności. */
+    @Test
+    void channelGetsPublishedOffersCount() throws Exception {
+        UUID seller = UUID.randomUUID();
+        UUID channel = channelOf(seller);
+        String a = publishedPhone(seller);
+        verify(channels).setOffersCount(channel, 1);
+        String b = publishedPhone(seller);
+        verify(channels).setOffersCount(channel, 2);
+        mvc.perform(post("/api/v1/offers/" + a + "/unpublish").header(HttpHeaders.AUTHORIZATION, bearer(seller))).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/offers/" + b).header(HttpHeaders.AUTHORIZATION, bearer(seller))).andExpect(status().isNoContent());
+        verify(channels, times(2)).setOffersCount(channel, 1);
+        verify(channels).setOffersCount(channel, 0);
+        // Odrzucona publikacja nic nie wysyła.
+        publish(seller, created(seller, PHONE)).andExpect(status().isUnprocessableContent());
+        verify(channels, times(4)).setOffersCount(eq(channel), anyInt());
     }
 
     @Test
@@ -233,7 +301,7 @@ class OfferFlowTests {
                 .andExpect(jsonPath("$.stock").value(nullValue()));
         stock(seller, id, 3).andExpect(status().isConflict());
         publish(seller, id)
-                .andExpect(jsonPath("$.detail").value("Uzupełnij przed publikacją: cennik usługi (cena od, jednostka, obszar, czas), co najmniej jedno zdjęcie albo film."));
+                .andExpect(jsonPath("$.detail").value("Uzupełnij przed publikacją: cennik usługi (cena od, jednostka, obszar, czas), opis usługi (co najmniej 20 znaków), co najmniej jedno zdjęcie albo film."));
 
         mvc.perform(put("/api/v1/offers/" + id + "/service-details").header(HttpHeaders.AUTHORIZATION, bearer(seller))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -248,6 +316,10 @@ class OfferFlowTests {
                         .content("{\"priceFrom\":{\"amount\":2500,\"currency\":\"EUR\"},\"unit\":\"m²\",\"area\":\"Kraków\",\"durationMin\":240,\"depositPercent\":120}"))
                 .andExpect(status().isBadRequest());
         setMedia(seller, id, "[\"" + photo(seller) + "\"]").andExpect(status().isOk());
+        publish(seller, id)
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.detail").value("Uzupełnij przed publikacją: opis usługi (co najmniej 20 znaków)."));
+        update(seller, id, "{\"description\":\"Ściany i sufity, z gruntowaniem.\"}").andExpect(status().isOk());
         publish(seller, id).andExpect(status().isOk());
 
         mvc.perform(get("/api/v1/offers/" + id + "/quality-score").header(HttpHeaders.AUTHORIZATION, bearer(seller)))
@@ -267,7 +339,7 @@ class OfferFlowTests {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.detail").value("Możesz dodać tylko zdjęcia, które sam wysłałeś."));
         UUID avatar = UUID.randomUUID();
-        given(media.get(avatar)).willReturn(new MediaFile(avatar, seller, "AVATAR", "image/png", "http://x/a"));
+        given(media.get(avatar)).willReturn(new MediaFile(avatar, seller, "AVATAR", "image/png", "http://x/a", null));
         setMedia(seller, id, "[\"" + avatar + "\"]").andExpect(status().isBadRequest());
         UUID missing = UUID.randomUUID();
         given(media.get(missing)).willThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nie znaleźliśmy jednego ze zdjęć. Wyślij je ponownie."));
@@ -300,7 +372,7 @@ class OfferFlowTests {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("DRAFT"))
                 .andExpect(jsonPath("$.title").value("iPhone 15 128 GB (kopia)"))
-                .andExpect(jsonPath("$.photoMediaIds", contains(photo.toString())))
+                .andExpect(jsonPath("$.photos[*].mediaId", contains(photo.toString())))
                 .andReturn().getResponse().getContentAsString(), "$.id");
         created(seller, "{}");
 
@@ -329,10 +401,18 @@ class OfferFlowTests {
         mvc.perform(get("/api/v1/offers")).andExpect(status().isBadRequest());
     }
 
+    private String publishedPhone(UUID seller) throws Exception {
+        String id = created(seller, "{\"type\":\"PRODUCT\",\"title\":\"iPhone 15 128 GB\",\"categoryId\":\"elektronika-telefony\","
+                + "\"condition\":\"Nowy\",\"price\":{\"amount\":349900,\"currency\":\"PLN\"},\"params\":[{\"label\":\"Marka\",\"value\":\"Apple\"}],"
+                + "\"media\":{\"photoMediaIds\":[\"" + photo(seller) + "\"]}}");
+        publish(seller, id).andExpect(status().isOk());
+        return id;
+    }
+
     private UUID photo(UUID owner) {
         UUID mediaId = UUID.randomUUID();
         given(media.get(mediaId)).willReturn(new MediaFile(mediaId, owner, "OFFER_PHOTO", "image/jpeg",
-                "http://localhost:8333/rynek-media-public/offer_photo/" + mediaId));
+                "http://localhost:8333/rynek-media-public/offer_photo/" + mediaId, "Zdjęcie " + mediaId));
         return mediaId;
     }
 

@@ -11,6 +11,7 @@ import pl.rynek.catalog.api.dto.MyOfferResponse;
 import pl.rynek.catalog.api.dto.OfferCardResponse;
 import pl.rynek.catalog.api.dto.OfferCardResponse.RatingRef;
 import pl.rynek.catalog.api.dto.OfferParamDto;
+import pl.rynek.catalog.api.dto.OfferPhotoDto;
 import pl.rynek.catalog.api.dto.OfferResponse;
 import pl.rynek.catalog.api.dto.OfferResponse.ServiceDetailsResponse;
 import pl.rynek.catalog.categories.CategoryService;
@@ -44,7 +45,7 @@ class OfferViews {
                 offer.getCategoryId() == null ? List.of() : categories.path(offer.getCategoryId()),
                 offer.getParams().stream().map(p -> new OfferParamDto(p.label(), p.value())).toList(), List.of(),
                 offer.getStock(), offer.getPhotos().stream().map(Photo::url).toList(),
-                offer.getPhotos().stream().map(Photo::mediaId).toList(), offer.getVideoId(), null, service, 0,
+                offer.getPhotos().stream().map(p -> new OfferPhotoDto(p.mediaId(), p.url(), p.altText())).toList(), offer.getVideoId(), null, service, 0,
                 offer.getCreatedAt());
     }
 

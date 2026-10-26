@@ -9,6 +9,8 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatus;
@@ -26,6 +28,8 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @Component
 public class ChannelClient {
+
+    private static final Logger log = LoggerFactory.getLogger(ChannelClient.class);
 
     private final RestClient http;
 
@@ -59,6 +63,19 @@ public class ChannelClient {
             return found == null ? Map.of() : found.stream().collect(Collectors.toMap(ChannelRef::id, Function.identity()));
         } catch (RestClientResponseException | ResourceAccessException e) {
             throw unavailable();
+        }
+    }
+
+    /**
+     * Licznik opublikowanych ofert w nagłówku kanału. Oferta jest już zapisana, więc błąd tylko logujemy:
+     * licznik poprawi się przy następnej publikacji, wstrzymaniu albo usunięciu.
+     */
+    public void setOffersCount(UUID channelId, int count) {
+        try {
+            http.put().uri("/internal/channels/{channelId}/offers-count", channelId).body(Map.of("count", count))
+                    .retrieve().toBodilessEntity();
+        } catch (RestClientResponseException | ResourceAccessException e) {
+            log.warn("Nie zapisano liczby ofert kanału {} ({}): {}", channelId, count, e.getMessage());
         }
     }
 
