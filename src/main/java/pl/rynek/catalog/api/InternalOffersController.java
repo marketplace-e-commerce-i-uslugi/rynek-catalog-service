@@ -1,27 +1,42 @@
 package pl.rynek.catalog.api;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
+
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import pl.rynek.catalog.api.dto.MoneyDto;
 import pl.rynek.catalog.api.dto.PriceAndStockResponse;
 import pl.rynek.catalog.api.dto.ReleaseStockRequest;
 import pl.rynek.catalog.api.dto.ReserveStockRequest;
 import pl.rynek.catalog.offers.Offer;
+import pl.rynek.catalog.offers.OfferRepository;
 import pl.rynek.catalog.offers.OfferService;
 import pl.rynek.catalog.offers.OfferType;
-
-import static pl.rynek.catalog.common.NotImplemented.notImplemented;
+import pl.rynek.catalog.stock.StockService;
 
 @RestController
 public class InternalOffersController {
 
-    private final OfferService offers;
+    private static final int MAX_BATCH = 100;
 
-    public InternalOffersController(OfferService offers) {
+    private final OfferService offers;
+    private final OfferRepository repository;
+    private final StockService stock;
+
+    public InternalOffersController(OfferService offers, OfferRepository repository, StockService stock) {
         this.offers = offers;
+        this.repository = repository;
+        this.stock = stock;
     }
 
     /**
@@ -29,24 +44,48 @@ public class InternalOffersController {
      */
     @GetMapping("/internal/offers/{offerId}/price-and-stock")
     public PriceAndStockResponse getPriceAndStock(@PathVariable String offerId) {
-        Offer offer = offers.active(offerId);
-        boolean available = offer.isPublished() && (offer.getType() == OfferType.SERVICE || offer.getStock() > 0);
-        return new PriceAndStockResponse(offer.getId(), offer.getType(), MoneyDto.pln(offer.getPriceAmount()), offer.getStock(), available);
+        return priceAndStock(offers.active(offerId));
     }
 
     /**
-     * Rezerwacja zapasu na czas płatności. Dostęp: int. Czeka na order-service (kontrakt rezerwacji i jej wygasania).
+     * To samo dla wielu ofert naraz (koszyk). Usunięte i nieznane id nie występują w odpowiedzi. Dostęp: int.
+     */
+    @GetMapping("/internal/offers/price-and-stock")
+    public List<PriceAndStockResponse> getPriceAndStockBatch(@RequestParam String ids) {
+        List<UUID> parsed;
+        try {
+            parsed = Arrays.stream(ids.split(",")).map(String::trim).filter(s -> !s.isEmpty()).map(UUID::fromString).distinct().toList();
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nieprawidłowe id oferty.");
+        }
+        if (parsed.size() > MAX_BATCH) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Najwyżej " + MAX_BATCH + " ofert w jednym żądaniu.");
+        }
+        return parsed.isEmpty() ? List.of() : repository.findAllActive(parsed).stream().map(InternalOffersController::priceAndStock).toList();
+    }
+
+    /**
+     * Rezerwacja zapasu na czas płatności: zdejmuje sztuki od razu, 409 gdy ich brakuje. Dostęp: int.
      */
     @PostMapping("/internal/offers/{offerId}/stock/reserve")
-    public void reserveStock(@PathVariable String offerId, @RequestBody ReserveStockRequest request) {
-        throw notImplemented();
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void reserveStock(@PathVariable UUID offerId, @Valid @RequestBody ReserveStockRequest request) {
+        stock.reserve(offerId, request.reservationId(), request.quantity());
     }
 
     /**
-     * Zwolnienie rezerwacji. Dostęp: int.
+     * Zwolnienie rezerwacji (anulowanie zamówienia): sztuki wracają do zapasu. Dostęp: int.
      */
     @PostMapping("/internal/offers/{offerId}/stock/release")
-    public void releaseStock(@PathVariable String offerId, @RequestBody ReleaseStockRequest request) {
-        throw notImplemented();
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void releaseStock(@PathVariable UUID offerId, @Valid @RequestBody ReleaseStockRequest request) {
+        stock.release(offerId, request.reservationId());
+    }
+
+    private static PriceAndStockResponse priceAndStock(Offer offer) {
+        boolean available = offer.isPublished() && (offer.getType() == OfferType.SERVICE || offer.getStock() > 0);
+        String thumbnail = offer.getPhotos().isEmpty() ? null : offer.getPhotos().getFirst().url();
+        return new PriceAndStockResponse(offer.getId(), offer.getType(), MoneyDto.pln(offer.getPriceAmount()), offer.getStock(),
+                available, offer.getTitle(), offer.getChannelId(), offer.getOwnerId(), thumbnail, OfferViews.tone(offer));
     }
 }

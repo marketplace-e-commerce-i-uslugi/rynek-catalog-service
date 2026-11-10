@@ -401,6 +401,76 @@ class OfferFlowTests {
         mvc.perform(get("/api/v1/offers")).andExpect(status().isBadRequest());
     }
 
+    @Test
+    void reservationTakesStockOnceAndReleaseReturnsItOnce() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = publishedPhone(seller);
+        stock(seller, id, 3).andExpect(status().isNoContent());
+        UUID first = UUID.randomUUID();
+        reserve(id, first, 2).andExpect(status().isNoContent());
+        // Ponowienie tej samej rezerwacji nie zdejmuje zapasu drugi raz.
+        reserve(id, first, 2).andExpect(status().isNoContent());
+        mvc.perform(get("/internal/offers/price-and-stock").param("ids", id + "," + UUID.randomUUID()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].stock").value(1))
+                .andExpect(jsonPath("$[0].available").value(true))
+                .andExpect(jsonPath("$[0].title").value("iPhone 15 128 GB"))
+                .andExpect(jsonPath("$[0].ownerId").value(seller.toString()))
+                .andExpect(jsonPath("$[0].channelId").value(channelOf(seller).toString()))
+                .andExpect(jsonPath("$[0].thumbnailUrl").value(containsString("offer_photo")));
+        reserve(id, UUID.randomUUID(), 2)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("Brak wystarczającej liczby sztuk albo oferta nie jest już dostępna."));
+        reserve(id, first, 1).andExpect(status().isConflict());
+
+        release(id, first).andExpect(status().isNoContent());
+        release(id, first).andExpect(status().isNoContent());
+        release(id, UUID.randomUUID()).andExpect(status().isNoContent());
+        mvc.perform(get("/internal/offers/" + id + "/price-and-stock")).andExpect(jsonPath("$.stock").value(3));
+        reserve(id, first, 2).andExpect(status().isConflict());
+    }
+
+    @Test
+    void parallelReservationsNeverSellMoreThanStock() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = publishedPhone(seller);
+        stock(seller, id, 3).andExpect(status().isNoContent());
+        int buyers = 8;
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(buyers);
+        try {
+            java.util.List<Future<Integer>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < buyers; i++) {
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return reserve(id, UUID.randomUUID(), 1).andReturn().getResponse().getStatus();
+                }));
+            }
+            start.countDown();
+            int ok = 0;
+            for (Future<Integer> result : results) {
+                ok += result.get() == HttpStatus.NO_CONTENT.value() ? 1 : 0;
+            }
+            org.junit.jupiter.api.Assertions.assertEquals(3, ok);
+        } finally {
+            pool.shutdown();
+        }
+        mvc.perform(get("/internal/offers/" + id + "/price-and-stock"))
+                .andExpect(jsonPath("$.stock").value(0))
+                .andExpect(jsonPath("$.available").value(false));
+    }
+
+    private ResultActions reserve(String offerId, UUID reservationId, int quantity) throws Exception {
+        return mvc.perform(post("/internal/offers/" + offerId + "/stock/reserve").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reservationId\":\"" + reservationId + "\",\"quantity\":" + quantity + "}"));
+    }
+
+    private ResultActions release(String offerId, UUID reservationId) throws Exception {
+        return mvc.perform(post("/internal/offers/" + offerId + "/stock/release").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reservationId\":\"" + reservationId + "\"}"));
+    }
+
     private String publishedPhone(UUID seller) throws Exception {
         String id = created(seller, "{\"type\":\"PRODUCT\",\"title\":\"iPhone 15 128 GB\",\"categoryId\":\"elektronika-telefony\","
                 + "\"condition\":\"Nowy\",\"price\":{\"amount\":349900,\"currency\":\"PLN\"},\"params\":[{\"label\":\"Marka\",\"value\":\"Apple\"}],"

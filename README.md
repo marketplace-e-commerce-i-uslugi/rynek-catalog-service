@@ -2,7 +2,7 @@
 
 `catalog-service` — oferty (produkty i usługi), kategorie
 
-> Status: **kategorie i oferty działają**: drzewo kategorii z atrybutami, szkic, edycja, zdjęcia z media-service, cennik usług, stan magazynowy, wskaźnik jakości, publikacja i wstrzymanie, duplikowanie, usunięcie, listy (moje, kanału, wsadowo) i `price-and-stock`. Rezerwacja i zwolnienie zapasu zwracają `501 Not Implemented`, bo czekają na order-service. Zdarzeń Kafka jeszcze nie ma.
+> Status: **kategorie i oferty działają**: drzewo kategorii z atrybutami, szkic, edycja, zdjęcia z media-service, cennik usług, stan magazynowy, wskaźnik jakości, publikacja i wstrzymanie, duplikowanie, usunięcie, listy (moje, kanału, wsadowo), `price-and-stock` (pojedynczo i wsadowo) oraz rezerwacja i zwolnienie zapasu dla order-service. Zdarzeń Kafka jeszcze nie ma.
 
 ## Uruchomienie
 
@@ -52,6 +52,7 @@ Ekrany: 4 Karta oferty, 6 Dodawanie oferty, 9 Panel (lista ofert). Serwis jest �
 | GET | `/api/v1/offers?channelId=&sort=` | Oferty kanału (zakładka „Oferty”) | pub |
 | GET | `/api/v1/offers/batch?ids=` | Wsadowe pobranie kart (feed, koszyk, czat) | pub |
 | GET | `/internal/offers/{offerId}/price-and-stock` | Aktualna cena i dostępność dla koszyka/zamówienia | int |
+| GET | `/internal/offers/price-and-stock?ids=` | To samo wsadowo (koszyk), do 100 ofert; usunięte pomija | int |
 | POST | `/internal/offers/{offerId}/stock/reserve` | Rezerwacja zapasu na czas płatności | int |
 | POST | `/internal/offers/{offerId}/stock/release` | Zwolnienie rezerwacji | int |
 
@@ -66,7 +67,8 @@ Ekrany: 4 Karta oferty, 6 Dodawanie oferty, 9 Panel (lista ofert). Serwis jest �
 - **Karty** biorą nazwę, handle, awatar i weryfikację kanału z channel-service przy każdym odczycie, jednym zapytaniem na listę. Gdy channel-service nie działa, wynikiem jest 503. Pola z innych serwisów są puste albo zerowe: ocena (engagement), długość filmu (tiktok-integration), najbliższy termin (booking), dostawa (shipping), liczba pytań, wyświetlenia (analytics). Sortowanie `popular` działa jak `newest`, dopóki nie ma danych o popularności.
 - **Wskaźnik jakości:** zdjęcia (co najmniej 3) 25 pkt, film 25, opis (co najmniej 80 znaków) 20, parametry 15, tytuł (co najmniej 20 znaków) 15. Poziom: od 80 „bardzo dobra”, od 50 „dobra”, poniżej „słaba”. Za brak atrybutów w kategorii parametry dostają komplet punktów.
 - **Paginacja:** `?cursor=&limit=` (domyślnie 20, najwyżej 50). Kursor jest nieprzezroczysty i zły daje 400. `/offers/mine` sortuje od ostatnio zmienionej, `/offers` od najnowszej publikacji albo `cheapest`.
-- **`/internal/offers/{id}/price-and-stock`:** `{offerId, type, price, stock, available}`, gdzie `available` znaczy: opublikowana i (usługa albo zapas większy od zera).
+- **`/internal/offers/{id}/price-and-stock`:** `{offerId, type, price, stock, available, title, channelId, ownerId, thumbnailUrl, tone}`, gdzie `available` znaczy: opublikowana i (usługa albo zapas większy od zera), a `stock` to sztuki dostępne (rezerwacje już odjęte).
+- **Rezerwacja zapasu:** `POST /stock/reserve {reservationId, quantity}` od razu zmniejsza `stock` (warunkowe UPDATE, więc bez sprzedaży ponad stan); brak sztuk daje 409. `reservationId` nadaje order-service (id pozycji zamówienia), więc ponowienie nic nie zmienia. `POST /stock/release {reservationId}` oddaje sztuki raz; nieznana lub zwolniona rezerwacja to 204. Rezerwacje nie wygasają same: zwalnia je order-service przy anulowaniu.
 - **Duplikat** to szkic z tytułem „… (kopia)” i tymi samymi plikami zdjęć.
 - **Licznik ofert kanału:** po publikacji, wstrzymaniu i usunięciu (po zatwierdzeniu transakcji) catalog przelicza opublikowane oferty kanału i wysyła liczbę do channel-service (`PUT /internal/channels/{id}/offers-count`). To tymczasowo zastępuje zdarzenia `offer.published`/`offer.unpublished`. Błąd channel-service tylko się loguje, a licznik poprawi się przy następnej zmianie.
 

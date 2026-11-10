@@ -73,7 +73,7 @@ class OfferViews {
     }
 
     /** Kolor zastępczej miniatury (media-1…4) stały dla oferty. */
-    private static int tone(Offer offer) {
+    static int tone(Offer offer) {
         return Math.floorMod(offer.getId().hashCode(), 4) + 1;
     }
 
