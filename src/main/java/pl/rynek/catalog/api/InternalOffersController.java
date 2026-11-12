@@ -85,7 +85,10 @@ public class InternalOffersController {
     private static PriceAndStockResponse priceAndStock(Offer offer) {
         boolean available = offer.isPublished() && (offer.getType() == OfferType.SERVICE || offer.getStock() > 0);
         String thumbnail = offer.getPhotos().isEmpty() ? null : offer.getPhotos().getFirst().url();
+        PriceAndStockResponse.Service service = offer.getType() == OfferType.SERVICE && offer.hasServiceDetails()
+                ? new PriceAndStockResponse.Service(offer.getServiceUnit(), offer.getServiceDurationMin(), offer.getServiceDepositPercent())
+                : null;
         return new PriceAndStockResponse(offer.getId(), offer.getType(), MoneyDto.pln(offer.getPriceAmount()), offer.getStock(),
-                available, offer.getTitle(), offer.getChannelId(), offer.getOwnerId(), thumbnail, OfferViews.tone(offer));
+                available, offer.getTitle(), offer.getChannelId(), offer.getOwnerId(), thumbnail, OfferViews.tone(offer), service);
     }
 }

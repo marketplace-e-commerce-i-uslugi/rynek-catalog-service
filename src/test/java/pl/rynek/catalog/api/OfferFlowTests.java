@@ -321,6 +321,13 @@ class OfferFlowTests {
                 .andExpect(jsonPath("$.detail").value("Uzupełnij przed publikacją: opis usługi (co najmniej 20 znaków)."));
         update(seller, id, "{\"description\":\"Ściany i sufity, z gruntowaniem.\"}").andExpect(status().isOk());
         publish(seller, id).andExpect(status().isOk());
+        // Cennik usługi dla booking-service.
+        mvc.perform(get("/internal/offers/" + id + "/price-and-stock"))
+                .andExpect(jsonPath("$.type").value("SERVICE"))
+                .andExpect(jsonPath("$.available").value(true))
+                .andExpect(jsonPath("$.service.unit").value("m²"))
+                .andExpect(jsonPath("$.service.durationMin").value(240))
+                .andExpect(jsonPath("$.service.depositPercent").value(20));
 
         mvc.perform(get("/api/v1/offers/" + id + "/quality-score").header(HttpHeaders.AUTHORIZATION, bearer(seller)))
                 .andExpect(status().isOk())

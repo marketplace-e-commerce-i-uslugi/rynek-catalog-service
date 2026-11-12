@@ -2,7 +2,7 @@
 
 Mikroserwis platformy **Rynek**: `catalog-service` — oferty (produkty i usługi), kategorie
 
-Zakres, endpointy i zdarzenia są opisane w `README.md`. Kategorie i oferty działają (PostgreSQL + Flyway, Spring Security Resource Server z JWKS identity); kanał sprzedawcy przychodzi z channel-service, zdjęcia z media-service. Rezerwacja i zwolnienie zapasu (`stock`) działają dla order-service. Nie dodawaj logiki bez wyraźnej prośby.
+Zakres, endpointy i zdarzenia są opisane w `README.md`. Kategorie i oferty działają (PostgreSQL + Flyway, Spring Security Resource Server z JWKS identity); kanał sprzedawcy przychodzi z channel-service, zdjęcia z media-service. Rezerwacja i zwolnienie zapasu (`stock`) działają dla order-service; `price-and-stock` ma też cennik usługi (`service`) dla booking-service. Nie dodawaj logiki bez wyraźnej prośby.
 
 ## Wspólne konwencje API (§1 dokumentu architektury)
 
