@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -70,7 +71,8 @@ public class OffersController {
      */
     @GetMapping("/api/v1/offers/{offerId}")
     public OfferResponse getOffer(@PathVariable String offerId, HttpServletRequest http) {
-        return views.offer(offers.visible(offerId, viewer.of(http)));
+        Optional<UUID> who = viewer.of(http);
+        return views.offer(offers.visible(offerId, who), who);
     }
 
     /**
