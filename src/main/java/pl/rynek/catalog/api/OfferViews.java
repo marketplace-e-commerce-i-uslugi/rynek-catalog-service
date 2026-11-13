@@ -1,5 +1,6 @@
 package pl.rynek.catalog.api;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,7 @@ import pl.rynek.catalog.api.dto.OfferParamDto;
 import pl.rynek.catalog.api.dto.OfferPhotoDto;
 import pl.rynek.catalog.api.dto.OfferResponse;
 import pl.rynek.catalog.api.dto.OfferResponse.ServiceDetailsResponse;
+import pl.rynek.catalog.booking.BookingClient;
 import pl.rynek.catalog.categories.CategoryService;
 import pl.rynek.catalog.channel.ChannelClient;
 import pl.rynek.catalog.channel.ChannelClient.ChannelRef;
@@ -23,6 +25,7 @@ import pl.rynek.catalog.engagement.QuestionCountClient;
 import pl.rynek.catalog.engagement.RatingClient;
 import pl.rynek.catalog.offers.Offer;
 import pl.rynek.catalog.offers.Offer.Photo;
+import pl.rynek.catalog.offers.OfferType;
 
 /** Składa odpowiedzi z oferty i danych kanału (jedno zapytanie do channel-service na całą listę). */
 @Component
@@ -33,8 +36,11 @@ class OfferViews {
     private final QuestionCountClient questionCounts;
     private final LikeClient likes;
     private final CategoryService categories;
+    private final BookingClient booking;
 
-    OfferViews(ChannelClient channels, RatingClient ratings, QuestionCountClient questionCounts, LikeClient likes, CategoryService categories) {
+    OfferViews(ChannelClient channels, RatingClient ratings, QuestionCountClient questionCounts, LikeClient likes, CategoryService categories,
+               BookingClient booking) {
+        this.booking = booking;
         this.channels = channels;
         this.ratings = ratings;
         this.questionCounts = questionCounts;
@@ -49,7 +55,7 @@ class OfferViews {
     /** Z oglądającym karta oferty niesie też {@code liked} (czy polubił); dla gościa pole jest puste. */
     OfferResponse offer(Offer offer, Optional<UUID> viewer) {
         ChannelRef channel = channelsOf(List.of(offer)).getOrDefault(offer.getChannelId(), missingChannel(offer));
-        OfferCardResponse card = card(offer, channel, ratingsOf(List.of(offer)).get(offer.getChannelId()));
+        OfferCardResponse card = card(offer, channel, ratingsOf(List.of(offer)).get(offer.getChannelId()), nextSlotsOf(List.of(offer)));
         ServiceDetailsResponse service = offer.hasServiceDetails()
                 ? new ServiceDetailsResponse(MoneyDto.pln(offer.getPriceAmount()), offer.getServiceUnit(), offer.getServiceArea(),
                 offer.getServiceDurationMin(), offer.getServiceDepositPercent())
@@ -67,7 +73,8 @@ class OfferViews {
     List<OfferCardResponse> cards(List<Offer> offers) {
         Map<UUID, ChannelRef> found = channelsOf(offers);
         Map<UUID, RatingClient.Rating> rated = ratingsOf(offers);
-        return offers.stream().map(o -> card(o, found.getOrDefault(o.getChannelId(), missingChannel(o)), rated.get(o.getChannelId()))).toList();
+        Map<UUID, Instant> slots = nextSlotsOf(offers);
+        return offers.stream().map(o -> card(o, found.getOrDefault(o.getChannelId(), missingChannel(o)), rated.get(o.getChannelId()), slots)).toList();
     }
 
     static MyOfferResponse mine(Offer offer) {
@@ -76,13 +83,18 @@ class OfferViews {
                 offer.getType(), offer.getPhotos().isEmpty() ? null : offer.getPhotos().getFirst().url(), tone(offer));
     }
 
-    private OfferCardResponse card(Offer offer, ChannelRef channel, RatingClient.Rating rating) {
+    private OfferCardResponse card(Offer offer, ChannelRef channel, RatingClient.Rating rating, Map<UUID, Instant> nextSlots) {
         List<Photo> photos = offer.getPhotos();
         return new OfferCardResponse(offer.getId(), offer.getType(), offer.getTitle(), MoneyDto.pln(offer.getPriceAmount()),
                 offer.getServiceUnit(), offer.getCondition(), photos.isEmpty() ? null : photos.getFirst().url(), tone(offer),
                 offer.getTitle().isBlank() ? "Nowa oferta" : offer.getTitle(), null, channel,
                 rating == null ? RatingRef.NONE : new RatingRef(rating.average(), rating.count()),
-                offer.getLocation(), null);
+                offer.getLocation(), nextSlots.get(offer.getId()));
+    }
+
+    /** Najbliższe terminy usług z listy jednym zapytaniem do booking-service; produkty nie pytają. */
+    private Map<UUID, Instant> nextSlotsOf(Collection<Offer> offers) {
+        return booking.nextSlots(offers.stream().filter(o -> o.getType() == OfferType.SERVICE).map(Offer::getId).toList());
     }
 
     private Map<UUID, ChannelRef> channelsOf(Collection<Offer> offers) {

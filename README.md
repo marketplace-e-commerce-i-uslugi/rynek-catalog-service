@@ -19,6 +19,7 @@ docker compose -f ../rynek-infra/local/docker-compose.yml up -d
 | `DB_URL`, `DB_USER`, `DB_PASSWORD` | `jdbc:postgresql://localhost:5432/catalog`, `catalog`, `catalog` | Baza serwisu |
 | `CHANNEL_SERVICE_URL` | `http://localhost:8082` | channel-service: `/internal/channels/...` |
 | `MEDIA_SERVICE_URL` | `http://localhost:8084` | media-service: `GET /internal/media/{id}` |
+| `BOOKING_SERVICE_URL` | `http://localhost:8093` | booking-service: `GET /internal/services/next-slots` (pole `nextSlot` kart i szczegółów usług) |
 | `IDENTITY_SERVICE_URL` | `http://localhost:8081` | identity-service: JWKS |
 | `JWT_ISSUER` | `rynek-identity` | Oczekiwany claim `iss` |
 
@@ -55,6 +56,7 @@ Ekrany: 4 Karta oferty, 6 Dodawanie oferty, 9 Panel (lista ofert). Serwis jest �
 | GET | `/internal/offers/price-and-stock?ids=` | To samo wsadowo (koszyk), do 100 ofert; usunięte pomija | int |
 | POST | `/internal/offers/{offerId}/stock/reserve` | Rezerwacja zapasu na czas płatności | int |
 | POST | `/internal/offers/{offerId}/stock/release` | Zwolnienie rezerwacji | int |
+| POST | `/internal/offers/{offerId}/stock/return` | Przywrócenie zapasu po zwrocie przyjętym przez sprzedawcę | int |
 
 ## Zachowanie
 
@@ -68,7 +70,7 @@ Ekrany: 4 Karta oferty, 6 Dodawanie oferty, 9 Panel (lista ofert). Serwis jest �
 - **Wskaźnik jakości:** zdjęcia (co najmniej 3) 25 pkt, film 25, opis (co najmniej 80 znaków) 20, parametry 15, tytuł (co najmniej 20 znaków) 15. Poziom: od 80 „bardzo dobra”, od 50 „dobra”, poniżej „słaba”. Za brak atrybutów w kategorii parametry dostają komplet punktów.
 - **Paginacja:** `?cursor=&limit=` (domyślnie 20, najwyżej 50). Kursor jest nieprzezroczysty i zły daje 400. `/offers/mine` sortuje od ostatnio zmienionej, `/offers` od najnowszej publikacji albo `cheapest`.
 - **`/internal/offers/{id}/price-and-stock`:** `{offerId, type, price, stock, available, title, channelId, ownerId, thumbnailUrl, tone}`, gdzie `available` znaczy: opublikowana i (usługa albo zapas większy od zera), a `stock` to sztuki dostępne (rezerwacje już odjęte).
-- **Rezerwacja zapasu:** `POST /stock/reserve {reservationId, quantity}` od razu zmniejsza `stock` (warunkowe UPDATE, więc bez sprzedaży ponad stan); brak sztuk daje 409. `reservationId` nadaje order-service (id pozycji zamówienia), więc ponowienie nic nie zmienia. `POST /stock/release {reservationId}` oddaje sztuki raz; nieznana lub zwolniona rezerwacja to 204. Rezerwacje nie wygasają same: zwalnia je order-service przy anulowaniu.
+- **Rezerwacja zapasu:** `POST /stock/reserve {reservationId, quantity}` od razu zmniejsza `stock` (warunkowe UPDATE, więc bez sprzedaży ponad stan); brak sztuk daje 409. `reservationId` nadaje order-service (id pozycji zamówienia), więc ponowienie nic nie zmienia. `POST /stock/release {reservationId}` oddaje sztuki raz; nieznana lub zwolniona rezerwacja to 204. Rezerwacje nie wygasają same: zwalnia je order-service przy anulowaniu. `POST /stock/return {reservationId, quantity}` (przyjęty zwrot) oddaje sztuki z rezerwacji raz (`returned_at`): ponowienie, rezerwacja już zwolniona albo już zwrócona to 204 bez zmiany zapasu, nieznana rezerwacja to 404, inna oferta lub ilość to 409. Oferta bez śledzenia zapasu (`stock` NULL) zostaje bez zmian.
 - **Duplikat** to szkic z tytułem „… (kopia)” i tymi samymi plikami zdjęć.
 - **Licznik ofert kanału:** po publikacji, wstrzymaniu i usunięciu (po zatwierdzeniu transakcji) catalog przelicza opublikowane oferty kanału i wysyła liczbę do channel-service (`PUT /internal/channels/{id}/offers-count`). To tymczasowo zastępuje zdarzenia `offer.published`/`offer.unpublished`. Błąd channel-service tylko się loguje, a licznik poprawi się przy następnej zmianie.
 
@@ -99,3 +101,5 @@ Gateway (§2) kieruje ruch po prefiksie ścieżki, a poniższe endpointy leżą 
 
 - `/api/v1/offers/{offerId}/video`: należy do `tiktok-integration-service` (prefiks wskazuje `catalog-service`).
 - `/api/v1/offers/{offerId}/questions`, `/api/v1/offers/{offerId}/like`: należy do `engagement-service` (prefiks wskazuje `catalog-service`).
+
+- **`nextSlot`:** dla usług karty i szczegóły oferty niosą najbliższy wolny termin z booking-service (lista: jedno zapytanie zbiorcze `/internal/services/next-slots?ids=`). Produkty i usługi bez wolnego terminu mają `null`, podobnie gdy booking-service nie działa (lista ofert się nie psuje).

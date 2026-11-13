@@ -27,6 +27,9 @@ public class StockReservation {
     @Column(name = "released_at")
     private Instant releasedAt;
 
+    @Column(name = "returned_at")
+    private Instant returnedAt;
+
     protected StockReservation() {
     }
 
@@ -53,7 +56,15 @@ public class StockReservation {
         return releasedAt != null;
     }
 
+    public boolean isReturned() {
+        return returnedAt != null;
+    }
+
     public void release(Instant now) {
         this.releasedAt = now;
+    }
+
+    public void markReturned(Instant now) {
+        this.returnedAt = now;
     }
 }

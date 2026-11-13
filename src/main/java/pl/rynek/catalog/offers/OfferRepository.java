@@ -38,6 +38,11 @@ public interface OfferRepository extends JpaRepository<Offer, UUID> {
     int takeStock(UUID id, int quantity);
 
     /** Oddaje sztuki ze zwolnionej rezerwacji, także do oferty wstrzymanej lub usuniętej (zapas wraca do stanu sprzed zamówienia). */
+    /** Zwrot przyjęty przez sprzedawcę: tylko oferty ze śledzonym zapasem (stock nie jest NULL). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "update offers set stock = stock + :quantity where id = :id and stock is not null", nativeQuery = true)
+    int restoreTrackedStock(UUID id, int quantity);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = "update offers set stock = coalesce(stock, 0) + :quantity where id = :id", nativeQuery = true)
     int returnStock(UUID id, int quantity);

@@ -18,6 +18,7 @@ import pl.rynek.catalog.api.dto.MoneyDto;
 import pl.rynek.catalog.api.dto.PriceAndStockResponse;
 import pl.rynek.catalog.api.dto.ReleaseStockRequest;
 import pl.rynek.catalog.api.dto.ReserveStockRequest;
+import pl.rynek.catalog.api.dto.ReturnStockRequest;
 import pl.rynek.catalog.offers.Offer;
 import pl.rynek.catalog.offers.OfferRepository;
 import pl.rynek.catalog.offers.OfferService;
@@ -80,6 +81,16 @@ public class InternalOffersController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void releaseStock(@PathVariable UUID offerId, @Valid @RequestBody ReleaseStockRequest request) {
         stock.release(offerId, request.reservationId());
+    }
+
+    /**
+     * Przywrócenie zapasu po zwrocie przyjętym przez sprzedawcę (order-service): sztuki z rezerwacji wracają raz,
+     * ponowienie niczego nie zmienia, oferta bez śledzenia zapasu zostaje bez zmian. Dostęp: int.
+     */
+    @PostMapping("/internal/offers/{offerId}/stock/return")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void returnStock(@PathVariable UUID offerId, @Valid @RequestBody ReturnStockRequest request) {
+        stock.restore(offerId, request.reservationId(), request.quantity());
     }
 
     private static PriceAndStockResponse priceAndStock(Offer offer) {

@@ -1,5 +1,6 @@
 package pl.rynek.catalog.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
@@ -49,6 +50,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.web.server.ResponseStatusException;
 import pl.rynek.catalog.TestcontainersConfig;
+import pl.rynek.catalog.booking.BookingClient;
 import pl.rynek.catalog.channel.ChannelClient;
 import pl.rynek.catalog.channel.ChannelClient.ChannelRef;
 import pl.rynek.catalog.channel.ChannelClient.OwnerChannel;
@@ -69,6 +71,9 @@ class OfferFlowTests {
     @Autowired
     MockMvc mvc;
 
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     @MockitoBean
     JwtDecoder jwtDecoder;
 
@@ -77,6 +82,9 @@ class OfferFlowTests {
 
     @MockitoBean
     MediaClient media;
+
+    @MockitoBean
+    BookingClient booking;
 
     @BeforeEach
     void stubs() {
@@ -293,6 +301,39 @@ class OfferFlowTests {
     }
 
     @Test
+    void serviceOffersCarryNextSlotAndProductsDoNot() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String service = created(seller, "{\"type\":\"SERVICE\",\"title\":\"Malowanie mieszkań\",\"categoryId\":\"remonty-malowanie\","
+                + "\"description\":\"Ściany i sufity, z gruntowaniem.\",\"media\":{\"photoMediaIds\":[\"" + photo(seller) + "\"]},"
+                + "\"service\":{\"priceFrom\":{\"amount\":2500,\"currency\":\"PLN\"},\"unit\":\"m²\",\"area\":\"Kraków\",\"durationMin\":240,\"depositPercent\":20}}");
+        publish(seller, service).andExpect(status().isOk());
+        String product = publishedPhone(seller);
+        stock(seller, product, 2).andExpect(status().isNoContent());
+
+        Instant slot = Instant.parse("2026-12-01T09:00:00Z");
+        given(booking.nextSlots(any())).willAnswer(call -> {
+            Collection<UUID> ids = call.getArgument(0);
+            return ids.contains(UUID.fromString(service)) ? java.util.Map.of(UUID.fromString(service), slot) : java.util.Map.of();
+        });
+        mvc.perform(get("/api/v1/offers/" + service)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.nextSlot").value("2026-12-01T09:00:00Z"));
+        mvc.perform(get("/api/v1/offers/" + product)).andExpect(jsonPath("$.nextSlot").value(nullValue()));
+        org.mockito.Mockito.clearInvocations(booking);
+        String list = mvc.perform(get("/api/v1/offers").param("channelId", channelOf(seller).toString()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat((java.util.List<String>) JsonPath.read(list, "$.items[?(@.id=='" + service + "')].nextSlot")).containsExactly("2026-12-01T09:00:00Z");
+        assertThat((java.util.List<?>) JsonPath.read(list, "$.items[?(@.id=='" + product + "')].nextSlot")).containsOnlyNulls();
+        // Booking dostaje tylko usługi, jednym zapytaniem na listę.
+        verify(booking, times(1)).nextSlots(java.util.List.of(UUID.fromString(service)));
+
+        // Awaria booking (pusta mapa) nie psuje listy ani szczegółów.
+        org.mockito.Mockito.doReturn(java.util.Map.of()).when(booking).nextSlots(any());
+        mvc.perform(get("/api/v1/offers/" + service)).andExpect(status().isOk()).andExpect(jsonPath("$.nextSlot").value(nullValue()));
+        mvc.perform(get("/api/v1/offers").param("channelId", channelOf(seller).toString())).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items", hasSize(2)));
+    }
+
+    @Test
     void serviceUsesServiceDetailsForPriceAndArea() throws Exception {
         UUID seller = UUID.randomUUID();
         String id = created(seller, "{\"type\":\"SERVICE\",\"title\":\"Malowanie mieszkań\",\"categoryId\":\"remonty-malowanie\",\"condition\":\"Nowy\"}");
@@ -436,6 +477,57 @@ class OfferFlowTests {
         release(id, UUID.randomUUID()).andExpect(status().isNoContent());
         mvc.perform(get("/internal/offers/" + id + "/price-and-stock")).andExpect(jsonPath("$.stock").value(3));
         reserve(id, first, 2).andExpect(status().isConflict());
+    }
+
+    @Test
+    void returnRestoresStockOnceAndNeverAfterRelease() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = publishedPhone(seller);
+        stock(seller, id, 5).andExpect(status().isNoContent());
+        UUID line = UUID.randomUUID();
+        reserve(id, line, 2).andExpect(status().isNoContent());
+        stockIs(id, 3);
+
+        giveBack(id, line, 1).andExpect(status().isConflict());
+        giveBack(UUID.randomUUID().toString(), line, 2).andExpect(status().isConflict());
+        giveBack(id, UUID.randomUUID(), 2).andExpect(status().isNotFound());
+        giveBack(id, line, 0).andExpect(status().isBadRequest());
+        stockIs(id, 3);
+
+        giveBack(id, line, 2).andExpect(status().isNoContent());
+        giveBack(id, line, 2).andExpect(status().isNoContent());
+        stockIs(id, 5);
+        // Po zwrocie późniejsze zwolnienie tej samej rezerwacji nie oddaje sztuk drugi raz.
+        release(id, line).andExpect(status().isNoContent());
+        stockIs(id, 5);
+
+        // Zwolniona rezerwacja (anulowanie) nie wraca jako zwrot.
+        UUID cancelled = UUID.randomUUID();
+        reserve(id, cancelled, 1).andExpect(status().isNoContent());
+        release(id, cancelled).andExpect(status().isNoContent());
+        giveBack(id, cancelled, 1).andExpect(status().isNoContent());
+        stockIs(id, 5);
+    }
+
+    @Test
+    void returnLeavesOfferWithoutStockTrackingUntouched() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = publishedPhone(seller);
+        stock(seller, id, 2).andExpect(status().isNoContent());
+        UUID line = UUID.randomUUID();
+        reserve(id, line, 1).andExpect(status().isNoContent());
+        jdbc.update("update offers set stock = null where id = ?", UUID.fromString(id));
+        giveBack(id, line, 1).andExpect(status().isNoContent());
+        org.junit.jupiter.api.Assertions.assertNull(jdbc.queryForObject("select stock from offers where id = ?", Integer.class, UUID.fromString(id)));
+    }
+
+    private void stockIs(String id, int expected) throws Exception {
+        mvc.perform(get("/internal/offers/" + id + "/price-and-stock")).andExpect(jsonPath("$.stock").value(expected));
+    }
+
+    private ResultActions giveBack(String offerId, UUID reservationId, int quantity) throws Exception {
+        return mvc.perform(post("/internal/offers/" + offerId + "/stock/return").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reservationId\":\"" + reservationId + "\",\"quantity\":" + quantity + "}"));
     }
 
     @Test

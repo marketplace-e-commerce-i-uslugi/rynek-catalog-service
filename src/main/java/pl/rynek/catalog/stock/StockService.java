@@ -56,12 +56,32 @@ public class StockService {
     @Transactional
     public void release(UUID offerId, UUID reservationId) {
         reservations.findForUpdate(reservationId)
-                .filter(r -> r.getOfferId().equals(offerId) && !r.isReleased())
+                .filter(r -> r.getOfferId().equals(offerId) && !r.isReleased() && !r.isReturned())
                 .ifPresent(r -> {
                     // Najpierw oznaczenie: returnStock czyści kontekst JPA, ale wcześniej zapisuje (flush) zmienione encje.
                     r.release(clock.instant());
                     offers.returnStock(offerId, r.getQuantity());
                 });
+    }
+
+    /**
+     * Przywrócenie sztuk po przyjętym zwrocie (rezerwacja ze zrealizowanego zamówienia nie była zwolniona). Raz: ponowienie,
+     * rezerwacja już zwolniona albo już zwrócona to sukces bez zmiany zapasu. Oferta bez śledzenia zapasu nie zmienia stanu.
+     * Nieznana rezerwacja to 404, inna oferta lub ilość to 409.
+     */
+    @Transactional
+    public void restore(UUID offerId, UUID reservationId, int quantity) {
+        StockReservation reservation = reservations.findForUpdate(reservationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Nie znaleźliśmy tej rezerwacji."));
+        if (!reservation.getOfferId().equals(offerId) || reservation.getQuantity() != quantity) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Rezerwacja o tym id dotyczy innej oferty lub ilości.");
+        }
+        if (reservation.isReleased() || reservation.isReturned()) {
+            return;
+        }
+        // Najpierw oznaczenie: restoreTrackedStock czyści kontekst JPA, ale wcześniej zapisuje (flush) zmienione encje.
+        reservation.markReturned(clock.instant());
+        offers.restoreTrackedStock(offerId, quantity);
     }
 
     private static void requireSame(StockReservation reservation, UUID offerId, int quantity) {

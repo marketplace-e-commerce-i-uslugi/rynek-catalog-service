@@ -18,6 +18,8 @@ spring:
 rynek:
   channel:
     url: ${CHANNEL_SERVICE_URL:http://localhost:8082}
+  booking:
+    url: ${BOOKING_SERVICE_URL:http://localhost:8093}
   engagement:
     url: ${ENGAGEMENT_SERVICE_URL:http://localhost:8088}
   media:
