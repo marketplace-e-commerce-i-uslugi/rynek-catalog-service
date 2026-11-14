@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
@@ -51,6 +52,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.web.server.ResponseStatusException;
 import pl.rynek.catalog.TestcontainersConfig;
 import pl.rynek.catalog.booking.BookingClient;
+import pl.rynek.catalog.video.VideoClient;
 import pl.rynek.catalog.channel.ChannelClient;
 import pl.rynek.catalog.channel.ChannelClient.ChannelRef;
 import pl.rynek.catalog.channel.ChannelClient.OwnerChannel;
@@ -85,6 +87,9 @@ class OfferFlowTests {
 
     @MockitoBean
     BookingClient booking;
+
+    @MockitoBean
+    VideoClient videoClient;
 
     @BeforeEach
     void stubs() {
@@ -614,6 +619,43 @@ class OfferFlowTests {
         assertThat((String) JsonPath.read(second, "$.items[0].id")).isNotEqualTo(JsonPath.read(page, "$.items[0].id"));
         sync("to-nie-data", null, 10).andExpect(status().isBadRequest());
         sync(start.toString(), "to-nie-uuid", 10).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void kanalOfertyDlaTiktokIntegration_takzeDlaSzkicu_a404DlaNieistniejacej() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String draft = created(seller, PHONE);
+        mvc.perform(get("/internal/offers/" + draft + "/channel")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.channelId", is(channelOf(seller).toString())));
+        mvc.perform(get("/internal/offers/" + UUID.randomUUID() + "/channel")).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void filmOfertyZapisujeSieZPotwierdzeniemTiktokIntegration_tylkoGdyFilmSieZmienil() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = created(seller, PHONE);
+        UUID video = UUID.randomUUID();
+        mvc.perform(put("/api/v1/offers/" + id + "/media").header(HttpHeaders.AUTHORIZATION, bearer(seller))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"photoMediaIds\":[],\"videoId\":\"" + video + "\"}")).andExpect(status().isOk());
+        verify(videoClient).setOfferVideo(UUID.fromString(id), channelOf(seller), video);
+        // Ten sam film ponownie: bez wywołania. Odpięcie: wywołanie z pustym filmem.
+        mvc.perform(put("/api/v1/offers/" + id + "/media").header(HttpHeaders.AUTHORIZATION, bearer(seller))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"photoMediaIds\":[],\"videoId\":\"" + video + "\"}")).andExpect(status().isOk());
+        verify(videoClient, times(1)).setOfferVideo(UUID.fromString(id), channelOf(seller), video);
+        setMedia(seller, id, "[]").andExpect(status().isOk());
+        verify(videoClient).setOfferVideo(UUID.fromString(id), channelOf(seller), null);
+    }
+
+    @Test
+    void cudzyFilmOdrzucaTiktokIntegration_awOfercieNicSieNieZmienia() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = created(seller, PHONE);
+        UUID video = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Możesz dodać tylko film swojego kanału."))
+                .when(videoClient).setOfferVideo(any(), any(), eq(video));
+        mvc.perform(put("/api/v1/offers/" + id + "/media").header(HttpHeaders.AUTHORIZATION, bearer(seller))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"photoMediaIds\":[],\"videoId\":\"" + video + "\"}")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/offers/" + id).header(HttpHeaders.AUTHORIZATION, bearer(seller))).andExpect(jsonPath("$.videoId").value(org.hamcrest.Matchers.nullValue()));
     }
 
     private ResultActions sync(String since, String afterId, int limit) throws Exception {

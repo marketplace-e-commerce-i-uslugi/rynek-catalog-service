@@ -2,7 +2,7 @@
 
 `catalog-service` — oferty (produkty i usługi), kategorie
 
-> Status: **kategorie i oferty działają**: drzewo kategorii z atrybutami, szkic, edycja, zdjęcia z media-service, cennik usług, stan magazynowy, wskaźnik jakości, publikacja i wstrzymanie, duplikowanie, usunięcie, listy (moje, kanału, wsadowo), `price-and-stock` (pojedynczo i wsadowo) oraz rezerwacja i zwolnienie zapasu dla order-service. Zdarzeń Kafka jeszcze nie ma.
+> Status: **kategorie i oferty działają**: drzewo kategorii z atrybutami, szkic, edycja, zdjęcia z media-service, cennik usług, stan magazynowy, wskaźnik jakości, publikacja i wstrzymanie, duplikowanie, usunięcie, listy (moje, kanału, wsadowo), `price-and-stock` (pojedynczo i wsadowo) oraz rezerwacja i zwolnienie zapasu dla order-service. Film oferty: zapis `videoId` w `PUT /offers/{id}/media` potwierdza tiktok-integration (`PUT /internal/offers/{id}/video`: film musi należeć do kanału oferty, 403/404 z komunikatem, 503 gdy serwis nie działa), a czas trwania filmu na kartach pobierany wsadowo z `/internal/videos` (bez tiktok-integration karty są bez czasu). `GET /internal/offers/{id}/channel` oddaje kanał oferty (także szkicu) dla tiktok-integration. Zdarzeń Kafka jeszcze nie ma.
 
 ## Uruchomienie
 

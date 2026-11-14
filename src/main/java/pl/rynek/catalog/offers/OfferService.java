@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -25,6 +26,7 @@ import pl.rynek.catalog.channel.ChannelClient;
 import pl.rynek.catalog.channel.ChannelClient.OwnerChannel;
 import pl.rynek.catalog.media.MediaClient;
 import pl.rynek.catalog.media.MediaClient.MediaFile;
+import pl.rynek.catalog.video.VideoClient;
 import pl.rynek.catalog.offers.Offer.Param;
 import pl.rynek.catalog.offers.Offer.Photo;
 
@@ -43,15 +45,17 @@ public class OfferService {
     private final CategoryService categories;
     private final ChannelClient channels;
     private final MediaClient media;
+    private final VideoClient videos;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
-    public OfferService(OfferRepository offers, CategoryService categories, ChannelClient channels, MediaClient media,
+    public OfferService(OfferRepository offers, CategoryService categories, ChannelClient channels, MediaClient media, VideoClient videos,
                         ApplicationEventPublisher events, Clock clock) {
         this.offers = offers;
         this.categories = categories;
         this.channels = channels;
         this.media = media;
+        this.videos = videos;
         this.events = events;
         this.clock = clock;
     }
@@ -272,6 +276,10 @@ public class OfferService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ten plik wysłano w innym celu. Dodaj zdjęcie ponownie.");
             }
             photos.add(new Photo(mediaId, file.url(), file.altText()));
+        }
+        if (!Objects.equals(request.videoId(), offer.getVideoId())) {
+            // Film musi należeć do kanału oferty (sprawdza tiktok-integration); oferta ma najwyżej jeden film.
+            videos.setOfferVideo(offer.getId(), offer.getChannelId(), request.videoId());
         }
         offer.changeMedia(photos, request.videoId(), now);
     }

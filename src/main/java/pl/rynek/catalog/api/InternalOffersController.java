@@ -3,6 +3,7 @@ package pl.rynek.catalog.api;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
@@ -66,6 +67,15 @@ public class InternalOffersController {
         List<SearchSyncPage.SearchSyncItem> items = views.searchItems(changed);
         Offer last = changed.isEmpty() ? null : changed.getLast();
         return new SearchSyncPage(items, last == null ? null : last.getUpdatedAt(), last == null ? null : last.getId(), changed.size() == size);
+    }
+
+    /**
+     * Kanał i tytuł oferty (także szkicu i wstrzymanej): tiktok-integration sprawdza, czy sprzedawca podpina film do własnej oferty, a analytics-service przypisuje zdarzenia kanałowi. Dostęp: int.
+     */
+    @GetMapping("/internal/offers/{offerId}/channel")
+    public Map<String, Object> getOfferChannel(@PathVariable String offerId) {
+        Offer offer = offers.active(offerId);
+        return Map.of("channelId", offer.getChannelId(), "title", offer.getTitle().isBlank() ? "Szkic bez tytułu" : offer.getTitle());
     }
 
     /**

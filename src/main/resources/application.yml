@@ -22,6 +22,8 @@ rynek:
     url: ${BOOKING_SERVICE_URL:http://localhost:8093}
   engagement:
     url: ${ENGAGEMENT_SERVICE_URL:http://localhost:8088}
+  tiktok:
+    url: ${TIKTOK_SERVICE_URL:http://localhost:8085}
   media:
     url: ${MEDIA_SERVICE_URL:http://localhost:8084}
   jwt:
