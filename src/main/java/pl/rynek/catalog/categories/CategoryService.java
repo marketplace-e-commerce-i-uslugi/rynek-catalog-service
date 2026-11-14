@@ -43,6 +43,17 @@ public class CategoryService {
         return find(categoryId).isPresent();
     }
 
+    /** Identyfikatory od kategorii głównej do podanej, np. {@code [elektronika, elektronika-telefony]} (filtr po kategorii nadrzędnej). */
+    public List<String> pathIds(String categoryId) {
+        List<String> ids = new ArrayList<>();
+        Optional<Row> current = find(categoryId);
+        while (current.isPresent()) {
+            ids.addFirst(current.get().id());
+            current = current.get().parentId() == null ? Optional.empty() : find(current.get().parentId());
+        }
+        return ids;
+    }
+
     /** Nazwy od kategorii głównej do podanej, np. {@code [Elektronika, Telefony]}. */
     public List<String> path(String categoryId) {
         List<String> names = new ArrayList<>();

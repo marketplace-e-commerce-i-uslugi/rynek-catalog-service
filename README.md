@@ -54,6 +54,7 @@ Ekrany: 4 Karta oferty, 6 Dodawanie oferty, 9 Panel (lista ofert). Serwis jest �
 | GET | `/api/v1/offers/batch?ids=` | Wsadowe pobranie kart (feed, koszyk, czat) | pub |
 | GET | `/internal/offers/{offerId}/price-and-stock` | Aktualna cena i dostępność dla koszyka/zamówienia; dla usługi także cennik `service {unit, durationMin, depositPercent}` (booking-service) | int |
 | GET | `/internal/offers/price-and-stock?ids=` | To samo wsadowo (koszyk), do 100 ofert; usunięte pomija | int |
+| GET | `/internal/offers/search-sync?since=&afterId=&limit=` | Zmiany ofert dla indeksu search-service po kursorze `(updatedAt, id)`, od najstarszej, do 200 na stronę: opublikowane z pełną kartą i opisem, pozostałe (szkice, wstrzymane, usunięte) jako „nagrobek” | int |
 | POST | `/internal/offers/{offerId}/stock/reserve` | Rezerwacja zapasu na czas płatności | int |
 | POST | `/internal/offers/{offerId}/stock/release` | Zwolnienie rezerwacji | int |
 | POST | `/internal/offers/{offerId}/stock/return` | Przywrócenie zapasu po zwrocie przyjętym przez sprzedawcę | int |

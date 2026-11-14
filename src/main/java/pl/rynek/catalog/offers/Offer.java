@@ -333,6 +333,14 @@ public class Offer {
         return createdAt;
     }
 
+    public Instant getPublishedAt() {
+        return publishedAt;
+    }
+
+    public boolean isDeleted() {
+        return deletedAt != null;
+    }
+
     public Instant getUpdatedAt() {
         return updatedAt;
     }

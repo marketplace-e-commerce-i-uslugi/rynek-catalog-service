@@ -560,6 +560,73 @@ class OfferFlowTests {
                 .andExpect(jsonPath("$.available").value(false));
     }
 
+    /** Zmiany ofert dla search-service od kursora; test filtruje po id, bo baza jest wspólna dla testów. */
+    @Test
+    void searchSyncReportsChangesTombstonesAndAvailability() throws Exception {
+        Instant start = Instant.now();
+        UUID seller = UUID.randomUUID();
+        String id = publishedPhone(seller);
+        stock(seller, id, 1).andExpect(status().isNoContent());
+
+        String first = sync(start.toString(), null, 200).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].active").value(true))
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].available").value(true))
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].hasVideo").value(false))
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].card.title").value("iPhone 15 128 GB"))
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].card.channel.name").value("Kanał testowy"))
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].categoryId").value("elektronika-telefony"))
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].params[0].label").value("Marka"))
+                .andExpect(jsonPath("$.hasMore").value(false))
+                .andReturn().getResponse().getContentAsString();
+        String since = JsonPath.read(first, "$.nextSince");
+        String afterId = JsonPath.read(first, "$.nextAfterId");
+        assertThat((java.util.List<?>) JsonPath.read(first, "$.items[?(@.id=='" + id + "')].categoryPath[*]")).hasSize(2);
+        assertThat((java.util.List<?>) JsonPath.read(first, "$.items[?(@.id=='" + id + "')].categoryIds[*]")).hasSize(2)
+                .last().isEqualTo("elektronika-telefony");
+        // Bez nowych zmian kolejna strona jest pusta, a kursor zostaje u klienta.
+        sync(since, afterId, 200).andExpect(jsonPath("$.items", hasSize(0))).andExpect(jsonPath("$.nextSince").doesNotExist());
+
+        // Sprzedaż ostatniej sztuki zmienia dostępność: oferta wraca w synchronizacji jako niedostępna.
+        reserve(id, UUID.randomUUID(), 1).andExpect(status().isNoContent());
+        sync(since, afterId, 200).andExpect(jsonPath("$.items[?(@.id=='" + id + "')].active").value(true))
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].available").value(false));
+        // Zwykła sprzedaż (zapas nie spada do zera) nie przestawia oferty w synchronizacji.
+        String other = publishedPhone(seller);
+        stock(seller, other, 5).andExpect(status().isNoContent());
+        String afterOther = sync(since, afterId, 200).andReturn().getResponse().getContentAsString();
+        String sinceOther = JsonPath.read(afterOther, "$.nextSince");
+        String afterIdOther = JsonPath.read(afterOther, "$.nextAfterId");
+        reserve(other, UUID.randomUUID(), 2).andExpect(status().isNoContent());
+        sync(sinceOther, afterIdOther, 200).andExpect(jsonPath("$.items", hasSize(0)));
+
+        // Wstrzymana i usunięta oferta to „nagrobek” bez karty.
+        mvc.perform(post("/api/v1/offers/" + id + "/unpublish").header(HttpHeaders.AUTHORIZATION, bearer(seller))).andExpect(status().isOk());
+        sync(sinceOther, afterIdOther, 200).andExpect(jsonPath("$.items[?(@.id=='" + id + "')].active").value(false))
+                .andExpect(jsonPath("$.items[?(@.id=='" + id + "')].card").value(org.hamcrest.Matchers.hasItem(nullValue())));
+        mvc.perform(delete("/api/v1/offers/" + other).header(HttpHeaders.AUTHORIZATION, bearer(seller))).andExpect(status().isNoContent());
+        sync(sinceOther, afterIdOther, 200).andExpect(jsonPath("$.items[?(@.id=='" + other + "')].active").value(false));
+
+        // Paginacja: limit 1 oddaje po jednej zmianie i mówi, że jest więcej; kursor prowadzi do następnej.
+        String page = sync(start.toString(), null, 1).andExpect(jsonPath("$.items", hasSize(1))).andExpect(jsonPath("$.hasMore").value(true))
+                .andReturn().getResponse().getContentAsString();
+        String second = sync(JsonPath.read(page, "$.nextSince"), JsonPath.read(page, "$.nextAfterId"), 1).andExpect(jsonPath("$.items", hasSize(1)))
+                .andReturn().getResponse().getContentAsString();
+        assertThat((String) JsonPath.read(second, "$.items[0].id")).isNotEqualTo(JsonPath.read(page, "$.items[0].id"));
+        sync("to-nie-data", null, 10).andExpect(status().isBadRequest());
+        sync(start.toString(), "to-nie-uuid", 10).andExpect(status().isBadRequest());
+    }
+
+    private ResultActions sync(String since, String afterId, int limit) throws Exception {
+        var request = get("/internal/offers/search-sync").param("limit", String.valueOf(limit));
+        if (since != null) {
+            request = request.param("since", since);
+        }
+        if (afterId != null) {
+            request = request.param("afterId", afterId);
+        }
+        return mvc.perform(request);
+    }
+
     private ResultActions reserve(String offerId, UUID reservationId, int quantity) throws Exception {
         return mvc.perform(post("/internal/offers/" + offerId + "/stock/reserve").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"reservationId\":\"" + reservationId + "\",\"quantity\":" + quantity + "}"));

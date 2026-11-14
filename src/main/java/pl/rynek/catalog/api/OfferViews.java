@@ -13,6 +13,7 @@ import pl.rynek.catalog.api.dto.MyOfferResponse;
 import pl.rynek.catalog.api.dto.OfferCardResponse;
 import pl.rynek.catalog.api.dto.OfferCardResponse.RatingRef;
 import pl.rynek.catalog.api.dto.OfferParamDto;
+import pl.rynek.catalog.api.dto.SearchSyncPage;
 import pl.rynek.catalog.api.dto.OfferPhotoDto;
 import pl.rynek.catalog.api.dto.OfferResponse;
 import pl.rynek.catalog.api.dto.OfferResponse.ServiceDetailsResponse;
@@ -25,6 +26,7 @@ import pl.rynek.catalog.engagement.QuestionCountClient;
 import pl.rynek.catalog.engagement.RatingClient;
 import pl.rynek.catalog.offers.Offer;
 import pl.rynek.catalog.offers.Offer.Photo;
+import pl.rynek.catalog.offers.OfferStatus;
 import pl.rynek.catalog.offers.OfferType;
 
 /** Składa odpowiedzi z oferty i danych kanału (jedno zapytanie do channel-service na całą listę). */
@@ -68,6 +70,26 @@ class OfferViews {
                 offer.getStock(), offer.getPhotos().stream().map(Photo::url).toList(),
                 offer.getPhotos().stream().map(p -> new OfferPhotoDto(p.mediaId(), p.url(), p.altText())).toList(), offer.getVideoId(), null, service, questionCounts.of(offer.getId()),
                 viewer.map(user -> likes.liked(offer.getId(), user)).orElse(null), offer.getCreatedAt());
+    }
+
+    /**
+     * Oferty dla indeksu wyszukiwarki, w kolejności wejściowej. Opublikowane dostają pełną kartę (kanał, ocena i termin pobrane
+     * wsadowo, jak na liście), pozostałe tylko „nagrobek”.
+     */
+    List<SearchSyncPage.SearchSyncItem> searchItems(List<Offer> offers) {
+        List<Offer> live = offers.stream().filter(o -> o.getStatus() == OfferStatus.PUBLISHED && !o.isDeleted()).toList();
+        Map<UUID, OfferCardResponse> cards = cards(live).stream().collect(java.util.stream.Collectors.toMap(OfferCardResponse::id, c -> c));
+        return offers.stream().map(o -> {
+            OfferCardResponse card = cards.get(o.getId());
+            if (card == null) {
+                return SearchSyncPage.SearchSyncItem.tombstone(o.getId(), o.getUpdatedAt());
+            }
+            boolean available = o.getType() == OfferType.SERVICE || o.getStock() == null || o.getStock() > 0;
+            return new SearchSyncPage.SearchSyncItem(o.getId(), true, o.getUpdatedAt(), card, o.getDescription(), o.getCategoryId(),
+                    o.getCategoryId() == null ? List.of() : categories.path(o.getCategoryId()),
+                    o.getCategoryId() == null ? List.of() : categories.pathIds(o.getCategoryId()), o.getVideoId() != null, available,
+                    o.getCreatedAt(), o.getPublishedAt(), o.getParams().stream().map(p -> new OfferParamDto(p.label(), p.value())).toList());
+        }).toList();
     }
 
     List<OfferCardResponse> cards(List<Offer> offers) {

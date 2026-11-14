@@ -1,10 +1,12 @@
 package pl.rynek.catalog.api;
 
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,6 +21,7 @@ import pl.rynek.catalog.api.dto.PriceAndStockResponse;
 import pl.rynek.catalog.api.dto.ReleaseStockRequest;
 import pl.rynek.catalog.api.dto.ReserveStockRequest;
 import pl.rynek.catalog.api.dto.ReturnStockRequest;
+import pl.rynek.catalog.api.dto.SearchSyncPage;
 import pl.rynek.catalog.offers.Offer;
 import pl.rynek.catalog.offers.OfferRepository;
 import pl.rynek.catalog.offers.OfferService;
@@ -29,15 +32,40 @@ import pl.rynek.catalog.stock.StockService;
 public class InternalOffersController {
 
     private static final int MAX_BATCH = 100;
+    static final int MAX_SYNC = 200;
 
     private final OfferService offers;
     private final OfferRepository repository;
     private final StockService stock;
+    private final OfferViews views;
 
-    public InternalOffersController(OfferService offers, OfferRepository repository, StockService stock) {
+    public InternalOffersController(OfferService offers, OfferRepository repository, StockService stock, OfferViews views) {
         this.offers = offers;
         this.repository = repository;
         this.stock = stock;
+        this.views = views;
+    }
+
+    /**
+     * Zmiany ofert dla indeksu search-service, od najstarszej zmiany po kursorze {@code (since, afterId)}; {@code limit}
+     * najwyżej {@value #MAX_SYNC}. Zamiast zdarzeń {@code offer.*}. Dostęp: int.
+     */
+    @GetMapping("/internal/offers/search-sync")
+    public SearchSyncPage searchSync(@RequestParam(required = false) String since, @RequestParam(required = false) String afterId,
+                                     @RequestParam(defaultValue = "100") int limit) {
+        Instant from;
+        UUID after;
+        try {
+            from = since == null || since.isBlank() ? Instant.EPOCH : Instant.parse(since);
+            after = afterId == null || afterId.isBlank() ? new UUID(0, 0) : UUID.fromString(afterId);
+        } catch (RuntimeException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nieprawidłowy kursor synchronizacji.");
+        }
+        int size = Math.max(1, Math.min(limit, MAX_SYNC));
+        List<Offer> changed = repository.syncPage(from, after, PageRequest.of(0, size));
+        List<SearchSyncPage.SearchSyncItem> items = views.searchItems(changed);
+        Offer last = changed.isEmpty() ? null : changed.getLast();
+        return new SearchSyncPage(items, last == null ? null : last.getUpdatedAt(), last == null ? null : last.getId(), changed.size() == size);
     }
 
     /**
