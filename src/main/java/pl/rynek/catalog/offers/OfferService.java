@@ -74,11 +74,13 @@ public class OfferService {
         return offers.save(offer);
     }
 
-    /** Opublikowaną i wstrzymaną widzi każdy (czat, koszyk), szkic tylko właściciel; pozostałym 404. */
+    /**
+     * Opublikowaną i wstrzymaną widzi każdy (czat, koszyk), szkic i zablokowaną przez moderatora tylko właściciel; pozostałym 404.
+     */
     @Transactional(readOnly = true)
     public Offer visible(String offerId, Optional<UUID> viewer) {
         return find(offerId)
-                .filter(o -> o.getStatus() != OfferStatus.DRAFT || viewer.map(o::isOwnedBy).orElse(false))
+                .filter(o -> (o.getStatus() != OfferStatus.DRAFT && !o.isBlocked()) || viewer.map(o::isOwnedBy).orElse(false))
                 .orElseThrow(OfferService::notFound);
     }
 
@@ -128,8 +130,24 @@ public class OfferService {
     @Transactional
     public Offer publish(UUID userId, String offerId) {
         Offer offer = owned(userId, offerId);
+        if (offer.isBlocked()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Ta oferta została zablokowana przez moderatora, więc nie można jej opublikować.");
+        }
         requireComplete(offer);
         offer.publish(clock.instant());
+        events.publishEvent(new ChannelOffersChanged(offer.getChannelId()));
+        return offer;
+    }
+
+    /** Moderacja (engagement-service po rozpatrzeniu zgłoszenia): blokada wstrzymuje ofertę, odblokowanie zostawia ją wstrzymaną. */
+    @Transactional
+    public Offer moderate(String offerId, boolean blocked) {
+        Offer offer = find(offerId).orElseThrow(OfferService::notFound);
+        if (blocked) {
+            offer.block(clock.instant());
+        } else {
+            offer.unblock(clock.instant());
+        }
         events.publishEvent(new ChannelOffersChanged(offer.getChannelId()));
         return offer;
     }

@@ -12,11 +12,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import pl.rynek.catalog.api.dto.ModerationRequest;
 import pl.rynek.catalog.api.dto.MoneyDto;
 import pl.rynek.catalog.api.dto.PriceAndStockResponse;
 import pl.rynek.catalog.api.dto.ReleaseStockRequest;
@@ -76,6 +78,16 @@ public class InternalOffersController {
     public Map<String, Object> getOfferChannel(@PathVariable String offerId) {
         Offer offer = offers.active(offerId);
         return Map.of("channelId", offer.getChannelId(), "title", offer.getTitle().isBlank() ? "Szkic bez tytułu" : offer.getTitle());
+    }
+
+    /**
+     * Moderacja oferty po rozpatrzeniu zgłoszenia (engagement-service): {@code blocked = true} wstrzymuje ofertę i uniemożliwia jej
+     * publikację, {@code false} zdejmuje blokadę (oferta zostaje wstrzymana). Dostęp: int.
+     */
+    @PutMapping("/internal/offers/{offerId}/moderation")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void moderate(@PathVariable String offerId, @Valid @RequestBody ModerationRequest request) {
+        offers.moderate(offerId, request.blocked());
     }
 
     /**

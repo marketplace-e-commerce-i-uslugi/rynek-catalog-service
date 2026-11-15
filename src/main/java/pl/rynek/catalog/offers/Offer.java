@@ -67,6 +67,9 @@ public class Offer {
     @Column(name = "video_id")
     private UUID videoId;
 
+    /** Zablokowana przez moderatora: wstrzymana i bez możliwości ponownej publikacji przez sprzedawcę. */
+    private boolean blocked;
+
     @Column(name = "service_unit")
     private String serviceUnit;
 
@@ -234,6 +237,25 @@ public class Offer {
     public void pause(Instant now) {
         this.status = OfferStatus.PAUSED;
         touch(now);
+    }
+
+    /** Moderacja: oferta opublikowana zostaje wstrzymana, szkic i wstrzymana tylko dostają blokadę. */
+    public void block(Instant now) {
+        if (status == OfferStatus.PUBLISHED) {
+            this.status = OfferStatus.PAUSED;
+        }
+        this.blocked = true;
+        touch(now);
+    }
+
+    /** Zdjęcie blokady: oferta zostaje wstrzymana, sprzedawca publikuje ją sam. */
+    public void unblock(Instant now) {
+        this.blocked = false;
+        touch(now);
+    }
+
+    public boolean isBlocked() {
+        return blocked;
     }
 
     public void delete(Instant now) {

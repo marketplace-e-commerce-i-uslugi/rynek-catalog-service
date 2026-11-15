@@ -106,7 +106,7 @@ class OfferViews {
     static MyOfferResponse mine(Offer offer) {
         return new MyOfferResponse(offer.getId(), offer.getTitle().isBlank() ? "Szkic bez tytułu" : offer.getTitle(),
                 offer.getStatus(), MoneyDto.pln(offer.getPriceAmount()), offer.getServiceUnit(), offer.getStock(), 0,
-                offer.getType(), offer.getPhotos().isEmpty() ? null : offer.getPhotos().getFirst().url(), tone(offer));
+                offer.getType(), offer.getPhotos().isEmpty() ? null : offer.getPhotos().getFirst().url(), tone(offer), offer.isBlocked());
     }
 
     private OfferCardResponse card(Offer offer, ChannelRef channel, RatingClient.Rating rating, Map<UUID, Instant> nextSlots, Map<UUID, Integer> durations) {

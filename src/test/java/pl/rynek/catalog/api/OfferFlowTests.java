@@ -658,6 +658,31 @@ class OfferFlowTests {
         mvc.perform(get("/api/v1/offers/" + id).header(HttpHeaders.AUTHORIZATION, bearer(seller))).andExpect(jsonPath("$.videoId").value(org.hamcrest.Matchers.nullValue()));
     }
 
+    @Test
+    void moderatorBlokujeOferte_sprzedawcaNieMozeJejOpublikowacDopokiBlokadaNieZostanieZdjeta() throws Exception {
+        UUID seller = UUID.randomUUID();
+        String id = publishedPhone(seller);
+        mvc.perform(put("/internal/offers/" + id + "/moderation").contentType(MediaType.APPLICATION_JSON).content("{\"blocked\":true}"))
+                .andExpect(status().isNoContent());
+        // Oferta znika z publicznych list, a sprzedawca widzi blokadę i nie opublikuje jej ponownie.
+        mvc.perform(get("/api/v1/offers/" + id)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/offers/mine").header(HttpHeaders.AUTHORIZATION, bearer(seller)))
+                .andExpect(jsonPath("$.items[0].status").value("PAUSED")).andExpect(jsonPath("$.items[0].blocked").value(true));
+        publish(seller, id).andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.detail").value("Ta oferta została zablokowana przez moderatora, więc nie można jej opublikować."));
+        // Zdjęcie blokady zostawia ofertę wstrzymaną; dopiero sprzedawca ją publikuje.
+        mvc.perform(put("/internal/offers/" + id + "/moderation").contentType(MediaType.APPLICATION_JSON).content("{\"blocked\":false}"))
+                .andExpect(status().isNoContent());
+        mvc.perform(get("/api/v1/offers/mine").header(HttpHeaders.AUTHORIZATION, bearer(seller)))
+                .andExpect(jsonPath("$.items[0].status").value("PAUSED")).andExpect(jsonPath("$.items[0].blocked").value(false));
+        publish(seller, id).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/offers/" + id)).andExpect(status().isOk());
+        // Walidacja i nieznana oferta.
+        mvc.perform(put("/internal/offers/" + id + "/moderation").contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isBadRequest());
+        mvc.perform(put("/internal/offers/" + UUID.randomUUID() + "/moderation").contentType(MediaType.APPLICATION_JSON).content("{\"blocked\":true}"))
+                .andExpect(status().isNotFound());
+    }
+
     private ResultActions sync(String since, String afterId, int limit) throws Exception {
         var request = get("/internal/offers/search-sync").param("limit", String.valueOf(limit));
         if (since != null) {
